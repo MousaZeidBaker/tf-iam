@@ -1,0 +1,51 @@
+name: Test
+
+on:
+  pull_request:
+    branches:
+      - '*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Install Terraform
+        run: |
+          sudo apt-get update && sudo apt-get install -y gnupg software-properties-common curl
+          curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -
+          sudo apt-add-repository "deb [arch=amd64] https://apt.releases.hashicorp.com $(lsb_release -cs) main"
+          sudo apt-get update && sudo apt-get install terraform=$(cat .terraform-version)
+          terraform version
+
+      - name: Test
+        env:
+          AWS_ACCESS_KEY_ID: ${{secrets.AWS_ACCESS_KEY_ID}}
+          AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+        run: |
+          for ENV in staging prod
+          do
+              # loop through leaf directories
+              for DIR in $(find $ENV -type d -not -path '*/.*' -exec sh -c '(ls -p "{}" | grep />/dev/null) || echo "{}"' \;);
+              do
+                  # temporary ignore backend 
+                  if [[ "$DIR" == *"backend"* ]]; then
+                      continue
+                  fi
+                  echo "Working directory: ${DIR}"
+
+                  # initialize working directory
+                  terraform -chdir=$DIR init
+
+                  # check configuration format
+                  terraform fmt -recursive --check
+
+                  # validate configuration
+                  terraform -chdir=$DIR validate
+
+                  # plan configuration
+                  terraform -chdir=$DIR plan -var-file ../../terraform.tfvars
+              done
+          done
